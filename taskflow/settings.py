@@ -12,7 +12,16 @@ TEMPLATES=[{"BACKEND":"django.template.backends.django.DjangoTemplates","DIRS":[
 WSGI_APPLICATION="taskflow.wsgi.application"
 DATABASES={"default":dj_database_url.config(default=f"sqlite:///{BASE_DIR/'db.sqlite3'}",conn_max_age=600)}
 AUTH_PASSWORD_VALIDATORS=[]
-LANGUAGE_CODE="pt-br"; TIME_ZONE="America/Sao_Paulo"; USE_I18N=True; USE_TZ=True
-STATIC_URL="static/"; STATIC_ROOT=BASE_DIR/"staticfiles"
+LANGUAGE_CODE="pt-br"
+TIME_ZONE="America/Sao_Paulo"
+USE_I18N=True
+USE_TZ=True
+STATIC_URL="/static/"
+STATIC_ROOT=BASE_DIR/"staticfiles"
+STATICFILES_DIRS=[BASE_DIR/"static"]
+STORAGES={"default":{"BACKEND":"django.core.files.storage.FileSystemStorage"},"staticfiles":{"BACKEND":"whitenoise.storage.CompressedManifestStaticFilesStorage"}}
+WHITENOISE_USE_FINDERS=True
+WHITENOISE_AUTOREFRESH=DEBUG
 DEFAULT_AUTO_FIELD="django.db.models.BigAutoField"
-LOGIN_REDIRECT_URL="/"; LOGOUT_REDIRECT_URL="/accounts/login/"
+LOGIN_REDIRECT_URL="/"
+LOGOUT_REDIRECT_URL="/accounts/login/"
