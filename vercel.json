@@ -1,1 +1,0 @@
-{"buildCommand":"python manage.py collectstatic --noinput","rewrites":[{"source":"/(.*)","destination":"/taskflow/wsgi.py"}]}
