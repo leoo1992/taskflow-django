@@ -1,0 +1,1 @@
+{% extends "base.html" %}{% block content %}<section class="card form-card"><h1>Confirmar exclusão</h1><p>Excluir <strong>{{object}}</strong>?</p><form method="post">{% csrf_token %}<button class="danger-button">Excluir</button></form></section>{% endblock %}

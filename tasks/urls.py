@@ -1,0 +1,3 @@
+from django.urls import path
+from . import views
+urlpatterns=[path("",views.dashboard,name="dashboard"),path("projetos/",views.project_list,name="project_list"),path("projetos/novo/",views.project_form,name="project_create"),path("projetos/<int:pk>/editar/",views.project_form,name="project_update"),path("projetos/<int:pk>/excluir/",views.project_delete,name="project_delete"),path("tarefas/",views.task_list,name="task_list"),path("tarefas/nova/",views.task_form,name="task_create"),path("tarefas/<int:pk>/editar/",views.task_form,name="task_update"),path("tarefas/<int:pk>/excluir/",views.task_delete,name="task_delete")]

@@ -1,0 +1,1 @@
+{% extends "base.html" %}{% block content %}<section class="card form-card"><h1>Entrar</h1><p>Acesse seus projetos e tarefas.</p><form method="post">{% csrf_token %}{{form.as_p}}<button>Entrar</button></form></section>{% endblock %}
