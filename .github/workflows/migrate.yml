@@ -1,0 +1,63 @@
+name: Django Database Migration
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: taskflow-database-migration
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    name: Migrate Neon database
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DEBUG: "False"
+      SECRET_KEY: ${{ secrets.DJANGO_SECRET_KEY }}
+      ALLOWED_HOSTS: ".vercel.app,localhost,127.0.0.1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::Missing GitHub Actions secret DATABASE_URL"
+            exit 1
+          fi
+          if [ -z "$SECRET_KEY" ]; then
+            echo "::error::Missing GitHub Actions secret DJANGO_SECRET_KEY"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Django system check
+        run: python manage.py check --deploy
+
+      - name: Verify committed migrations
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Show migration plan
+        run: python manage.py migrate --plan
+
+      - name: Apply migrations
+        run: python manage.py migrate --noinput
+
+      - name: Verify migrations
+        run: python manage.py showmigrations
