@@ -19,8 +19,3 @@ python manage.py runserver
 
 ## Vercel
 Configure SECRET_KEY, DEBUG=False, ALLOWED_HOSTS=.vercel.app e DATABASE_URL nas Environment Variables. Use PostgreSQL persistente para produção.
-
-## Melhoria contínua autônoma
-O repositório inclui um fluxo diário com Codex para propor, revisar, testar, abrir PR, fazer merge e validar produção automaticamente, sempre com limites de escopo e caminhos protegidos.
-
-Veja [AUTONOMOUS_ENGINEERING.md](AUTONOMOUS_ENGINEERING.md) para arquitetura, guardrails e a configuração única do secret `OPENAI_API_KEY`.
