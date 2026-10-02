@@ -91,7 +91,7 @@ jobs:
           changed_files="$(git diff --cached --name-only)"
           printf '%s\n' "$changed_files"
 
-          if printf '%s\n' "$changed_files" | grep -Eq '^(\.github/|requirements[^/]*\.txt$|\.env($|\.)|taskflow/settings\.py$|tasks/migrations/)'; then
+          if printf '%s\n' "$changed_files" | grep -Eq '^(\.github/|requirements.*\.txt$|pyproject\.toml$|poetry\.lock$|Pipfile($|\.)|\.env($|\.)|\.gitignore$|LICENSE$|taskflow/settings\.py$|tasks/migrations/|vercel\.json$|Dockerfile$|docker-compose)'; then
             echo "::error::Candidate modified a protected path."
             exit 1
           fi
@@ -102,7 +102,7 @@ jobs:
             exit 1
           fi
 
-          if git diff --cached --numstat | awk '$1 == "-" || $2 == "-" { exit 0 } END { exit 1 }'; then
+          if git diff --cached --numstat | awk '$1 == "-" || $2 == "-" { found=1 } END { exit found ? 0 : 1 }'; then
             echo "::error::Binary changes are not allowed."
             exit 1
           fi
@@ -317,7 +317,6 @@ jobs:
         run: |
           set -euo pipefail
           branch="${{ steps.branch.outputs.name }}"
-          before="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           gh workflow run ci.yml --ref "$branch"
           sleep 8
 
