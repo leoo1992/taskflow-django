@@ -1,21 +1,50 @@
 name: CI
-on: [push, pull_request]
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r requirements.txt
-      - run: python manage.py check
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify installed dependencies
+        run: python -m pip check
+
+      - name: Compile Python sources
+        run: python -m compileall -q taskflow tasks
+
+      - name: Django system check
+        run: python manage.py check
         env:
           DEBUG: "True"
-      - run: python manage.py collectstatic --noinput
+
+      - name: Verify committed migrations
+        run: python manage.py makemigrations --check --dry-run
         env:
           DEBUG: "True"
-      - run: python manage.py test
+
+      - name: Collect static files
+        run: python manage.py collectstatic --noinput
+        env:
+          DEBUG: "True"
+
+      - name: Run tests
+        run: python manage.py test
         env:
           DEBUG: "True"
