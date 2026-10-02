@@ -1,0 +1,392 @@
+name: Autonomous Daily Improvement
+
+on:
+  schedule:
+    # 03:30 America/Sao_Paulo (UTC-3)
+    - cron: "30 6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: taskflow-autonomous-daily-improvement
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.12"
+  PRODUCTION_URL: "https://taskflow-django-theta.vercel.app"
+
+jobs:
+  improve:
+    name: Propose one safe improvement
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      has_changes: ${{ steps.changes.outputs.has_changes }}
+
+    steps:
+      - name: Checkout main without persisted credentials
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies before sandboxing
+        run: pip install -r requirements.txt
+
+      - name: Verify OpenAI API secret
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "::error::Missing repository secret OPENAI_API_KEY."
+            echo "::error::Add it in Settings > Secrets and variables > Actions > New repository secret."
+            exit 1
+          fi
+
+      - name: Baseline validation
+        env:
+          DEBUG: "True"
+        run: |
+          python -m pip check
+          python -m compileall -q taskflow tasks
+          python manage.py check
+          python manage.py makemigrations --check --dry-run
+          python manage.py collectstatic --noinput
+          python manage.py test
+          git diff --check
+
+      - name: Run autonomous engineer
+        id: codex
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          permission-profile: ":workspace"
+          prompt-file: .github/codex/daily-improvement.md
+          effort: high
+          output-file: ${{ runner.temp }}/codex-summary.md
+
+      - name: Enforce change guardrails
+        id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "Codex found no safe change today."
+            exit 0
+          fi
+
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
+
+          changed_files="$(git diff --cached --name-only)"
+          printf '%s\n' "$changed_files"
+
+          if printf '%s\n' "$changed_files" | grep -Eq '^(\.github/|requirements.*\.txt$|pyproject\.toml$|poetry\.lock$|Pipfile($|\.)|\.env($|\.)|\.gitignore$|LICENSE$|taskflow/settings\.py$|tasks/migrations/|vercel\.json$|Dockerfile$|docker-compose)'; then
+            echo "::error::Candidate modified a protected path."
+            exit 1
+          fi
+
+          file_count="$(printf '%s\n' "$changed_files" | sed '/^$/d' | wc -l | tr -d ' ')"
+          if [ "$file_count" -gt 6 ]; then
+            echo "::error::Candidate changed $file_count files; maximum is 6."
+            exit 1
+          fi
+
+          if git diff --cached --numstat | awk '$1 == "-" || $2 == "-" { found=1 } END { exit found ? 0 : 1 }'; then
+            echo "::error::Binary changes are not allowed."
+            exit 1
+          fi
+
+          changed_lines="$(git diff --cached --numstat | awk '{a += $1; d += $2} END {print a+d+0}')"
+          if [ "$changed_lines" -gt 400 ]; then
+            echo "::error::Candidate changed $changed_lines lines; maximum is 400."
+            exit 1
+          fi
+
+          git diff --cached --check
+
+      - name: Validate candidate
+        if: steps.changes.outputs.has_changes == 'true'
+        env:
+          DEBUG: "True"
+        run: |
+          python -m pip check
+          python -m compileall -q taskflow tasks
+          python manage.py check
+          python manage.py makemigrations --check --dry-run
+          python manage.py collectstatic --noinput
+          python manage.py test
+          git diff --cached --check
+
+      - name: Package candidate for independent review
+        if: steps.changes.outputs.has_changes == 'true'
+        shell: bash
+        run: |
+          mkdir -p "${{ runner.temp }}/autonomous-candidate"
+          git diff --cached --binary > "${{ runner.temp }}/autonomous-candidate/change.patch"
+          cp "${{ runner.temp }}/codex-summary.md" "${{ runner.temp }}/autonomous-candidate/author-summary.md"
+
+      - name: Upload candidate artifact
+        if: steps.changes.outputs.has_changes == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: autonomous-candidate
+          path: ${{ runner.temp }}/autonomous-candidate
+          if-no-files-found: error
+          retention-days: 7
+
+  review:
+    name: Independent Codex review
+    needs: improve
+    if: needs.improve.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout main without persisted credentials
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: autonomous-candidate
+          path: ${{ runner.temp }}/autonomous-candidate
+
+      - name: Apply candidate
+        run: git apply --index "${{ runner.temp }}/autonomous-candidate/change.patch"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies before sandboxing
+        run: pip install -r requirements.txt
+
+      - name: Validate candidate independently
+        env:
+          DEBUG: "True"
+        run: |
+          python -m pip check
+          python -m compileall -q taskflow tasks
+          python manage.py check
+          python manage.py makemigrations --check --dry-run
+          python manage.py collectstatic --noinput
+          python manage.py test
+          git diff --cached --check
+
+      - name: Run independent reviewer
+        id: reviewer
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          permission-profile: ":read-only"
+          prompt-file: .github/codex/review-improvement.md
+          effort: medium
+          output-file: ${{ runner.temp }}/review.json
+          output-schema: |
+            {
+              "type": "object",
+              "properties": {
+                "approved": {"type": "boolean"},
+                "summary": {"type": "string"},
+                "blocking_issues": {
+                  "type": "array",
+                  "items": {"type": "string"}
+                }
+              },
+              "required": ["approved", "summary", "blocking_issues"],
+              "additionalProperties": false
+            }
+
+      - name: Enforce reviewer decision
+        shell: bash
+        run: |
+          cat "${{ runner.temp }}/review.json"
+          jq -e '.approved == true' "${{ runner.temp }}/review.json" >/dev/null
+
+  publish:
+    name: PR, CI, merge and production smoke test
+    needs: [improve, review]
+    if: needs.improve.outputs.has_changes == 'true' && needs.review.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: write
+
+    steps:
+      - name: Checkout latest main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Download approved candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: autonomous-candidate
+          path: ${{ runner.temp }}/autonomous-candidate
+
+      - name: Apply approved patch
+        run: git apply --index "${{ runner.temp }}/autonomous-candidate/change.patch"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install and run final quality gate
+        env:
+          DEBUG: "True"
+        run: |
+          pip install -r requirements.txt
+          python -m pip check
+          python -m compileall -q taskflow tasks
+          python manage.py check
+          python manage.py makemigrations --check --dry-run
+          python manage.py collectstatic --noinput
+          python manage.py test
+          git diff --cached --check
+
+      - name: Create autonomous branch and commit
+        id: branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch="codex/daily-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git config user.name "taskflow-autonomous-agent[bot]"
+          git config user.email "taskflow-autonomous-agent[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -m "chore: autonomous daily improvement"
+          git push --set-upstream origin "$branch"
+          echo "name=$branch" >> "$GITHUB_OUTPUT"
+
+      - name: Create pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          summary="$(cat "${{ runner.temp }}/autonomous-candidate/author-summary.md")"
+          pr_url="$(gh pr create \
+            --base main \
+            --head "${{ steps.branch.outputs.name }}" \
+            --title "chore: autonomous daily improvement" \
+            --body "## Autonomous improvement
+
+          ${summary}
+
+          ## Guardrails
+          - Candidate produced without a persisted GitHub write token
+          - Protected paths blocked
+          - Scope capped at 6 files / 400 changed lines
+          - Independent read-only Codex review approved
+          - Django quality gate passed before PR creation
+
+          Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}")"
+          echo "url=$pr_url" >> "$GITHUB_OUTPUT"
+          echo "Created $pr_url"
+
+      - name: Run independent CI workflow on candidate branch
+        id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch="${{ steps.branch.outputs.name }}"
+          gh workflow run ci.yml --ref "$branch"
+          sleep 8
+
+          run_id=""
+          for attempt in $(seq 1 18); do
+            run_id="$(gh run list \
+              --workflow ci.yml \
+              --branch "$branch" \
+              --event workflow_dispatch \
+              --limit 5 \
+              --json databaseId,createdAt \
+              --jq '.[0].databaseId // empty')"
+            if [ -n "$run_id" ]; then
+              break
+            fi
+            sleep 10
+          done
+
+          if [ -z "$run_id" ]; then
+            echo "::error::Could not locate dispatched CI run."
+            exit 1
+          fi
+
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          gh run watch "$run_id" --exit-status
+
+      - name: Merge approved pull request
+        id: merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh pr merge "${{ steps.pr.outputs.url }}" --squash --delete-branch
+          merge_sha="$(gh pr view "${{ steps.pr.outputs.url }}" --json mergeCommit --jq '.mergeCommit.oid')"
+          echo "sha=$merge_sha" >> "$GITHUB_OUTPUT"
+          echo "Merged as $merge_sha"
+
+      - name: Production smoke test
+        id: smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Waiting for the Vercel production deployment triggered by main..."
+          sleep 45
+
+          for attempt in $(seq 1 12); do
+            if curl --fail --silent --show-error --location --max-time 20 "${PRODUCTION_URL}/" >/dev/null; then
+              echo "Production is responding successfully."
+              exit 0
+            fi
+            echo "Smoke attempt $attempt/12 failed; retrying..."
+            sleep 15
+          done
+
+          echo "::error::Production smoke test failed after merge."
+          exit 1
+
+      - name: Open incident issue when production smoke test fails
+        if: failure() && steps.merge.outputs.sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh issue create \
+            --title "Production smoke test failed after autonomous merge" \
+            --body "The autonomous workflow merged commit \`${{ steps.merge.outputs.sha }}\`, but the production smoke test did not recover within the retry window.
+
+          Production: ${PRODUCTION_URL}
+          Pull request: ${{ steps.pr.outputs.url }}
+          Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+          Investigate the Vercel deployment/runtime before further autonomous changes."
