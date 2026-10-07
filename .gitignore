@@ -12,3 +12,4 @@ htmlcov/
 .vscode/
 .idea/
 coverage/
+node_modules/
