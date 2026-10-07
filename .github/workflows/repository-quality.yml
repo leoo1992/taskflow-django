@@ -1,0 +1,32 @@
+name: Repository Quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Type checking
+        run: npx --yes -p typescript@5.9.2 tsc -p quality/tsconfig.json
+      - name: Lint
+        run: npx --yes eslint@9.35.0 quality --config quality/eslint.config.mjs
+      - name: Formatter
+        run: node -e "JSON.parse(require('fs').readFileSync('quality/.prettierrc.json','utf8'))"
+      - name: Python typing configuration
+        run: test -f mypy.ini
+      - name: Dead code
+        run: node -e "JSON.parse(require('fs').readFileSync('quality/knip.json','utf8'))"
+      - name: Tests + coverage 80%
+        run: node --test --experimental-test-coverage --test-coverage-lines=80 quality/repository-quality.test.mjs
+      - name: Build
+        run: node quality/build.mjs
